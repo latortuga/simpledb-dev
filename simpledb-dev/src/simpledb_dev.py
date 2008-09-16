@@ -34,7 +34,7 @@ DATA_DIR = os.path.realpath('domains/')
 VERSION = '2007-11-07'
 
 #Enable to turn off template caching etc.
-DEV_MODE = False
+DEV_MODE = True
 
 # For debugging use only
 web.internalerror = web.debugerror
@@ -66,7 +66,7 @@ class SimpleDBDevDispatcher:
             self._checkVersion(input)
             self._checkTimestamp(input)
             self._checkSignature(input)
-            self._runAction(input)
+            return self._runAction(input)
         
         except SimpleDBError, e:
             web.ctx.status = e.httpStatus
@@ -82,7 +82,7 @@ class SimpleDBDevDispatcher:
             
         # TODO: not sure what the response is for an action not existing
         if action == '':
-            self._error('NoSuchAction', '400 Bad Request', "The action " + input.get('Action', '') + " is not valid for this web service.", getRequestId())
+            self._error('NoSuchAction', '400 Bad Request', "The action " + input.get('Action', '') + " is not valid for this web service.")
         
         return SimpleDBDevRenderer.__dict__[action].__get__(SimpleDBDevRenderer(), SimpleDBDevRenderer)(input)
 
@@ -101,7 +101,7 @@ class SimpleDBDevDispatcher:
 
     def _checkVersion(self, input):
         if input.get('Version', '') != VERSION :
-                self._error('NoSuchVersion', '400 Bad Request', 'SimpleDB/dev only supports version 2007-11-07 currently', getRequestId())
+                self._error('NoSuchVersion', '400 Bad Request', 'SimpleDB/dev only supports version 2007-11-07 currently')
 
     def _error(self, code, httpStatus, msg = ''):
         raise SimpleDBError(getRequestId(), httpStatus, code, msg)
