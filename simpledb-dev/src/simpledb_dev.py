@@ -27,7 +27,7 @@
 # To run tests: python simpledb_dev.py test
 #===============================================================================
 
-import sys, os, time, re, cgi, base64, pickle, uuid, web, fcntl
+import sys, os, time, re, base64, pickle, uuid, web, fcntl
 
 MAX_DOMAINS = 100
 DATA_DIR = os.path.realpath('domains/')
@@ -172,7 +172,7 @@ class SimpleDBDev:
     def _getDomainNames(self):
         domainNames = []
         for file in os.listdir(DATA_DIR):
-            if str(file).endswith('.lock') : 
+            if str(file).endswith('.lock') or str(file).startswith('.'): 
                 continue
             domainNames.append(base64.b64decode(file))
         return domainNames
