@@ -784,8 +784,13 @@ class SimpleDBTest():
         assert sorted(list) == sorted(['0802131786'])
         assert NextToken is None
         
-        print "Sample DeleteAttributes:\n"
-        print SimpleDBDevRenderer().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
+        self.sample({'Action': 'Query', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
+
+
+    def sample(self, input):        
+        print "Sample "+input['Action']+":\n"
+        print '?'+web.http.urlencode(input)+"\n"
+        print SimpleDBDevDispatcher().run(input)
         
     def testListDomains(self):
         domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
@@ -793,8 +798,7 @@ class SimpleDBTest():
         
         domain2 = self.domain+'XXX'
         
-        print "Sample CreateDomain:\n"
-        print SimpleDBDevRenderer().CreateDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
+        self.sample({'Action': 'CreateDomain', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
 
         domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert sorted(domains) == sorted([self.domain, domain2])
@@ -805,21 +809,24 @@ class SimpleDBTest():
         domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'NextToken' : nextToken, 'MaxNumberOfDomains': '1'})
         assert domains == [domain2]
         
-        print "Sample ListDomains:\n"
-        print SimpleDBDevRenderer().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
-        
-        print "Sample DeleteDomain:\n"
-        print SimpleDBDevRenderer().DeleteDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
+        self.sample({'Action': 'ListDomains', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
+        self.sample({'Action': 'DeleteDomain', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
         
     def testPutAttributesReplace(self):
         
         s = SimpleDBDev()
         
         input = {
-                 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 
+                 'Action': 'PutAttributes', 
+                 'Timestamp': 'XXX', 
+                 'Signature' : 'XXX', 
+                 'AWSAccessKeyId' : self.awsKey, 
+                 'Version' : self.version, 
                  'ItemName' : 'B00005JPLW',
                  'DomainName' : self.domain,
-                 'Attribute.0.Name' : 'Rating', 'Attribute.0.Value' : '*****', 'Attribute.0.Replace' : 'true'
+                 'Attribute.0.Name' : 'Rating', 
+                 'Attribute.0.Value' : '*****', 
+                 'Attribute.0.Replace' : 'true'
                  }
 
         s.PutAttributes(input)
@@ -832,8 +839,7 @@ class SimpleDBTest():
         assert sorted(list) == sorted([])
         assert NextToken is None
         
-        print "Sample PutAttributes:\n"
-        print SimpleDBDevRenderer().PutAttributes(input)
+        self.sample(input)
 
     def testQueryWithAttributes(self):
         
@@ -854,8 +860,7 @@ class SimpleDBTest():
         for key in expected :
             assert sorted(item[key]) == sorted(expected[key]) 
             
-        print "Sample QueryWithAttributes:"
-        print SimpleDBDevRenderer().QueryWithAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
+        self.sample({'Action': 'QueryWithAttributes', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
         
     def testQuery(self):
         
@@ -938,8 +943,7 @@ class SimpleDBTest():
         assert sorted(list) == sorted(['B00005JPLW','B000T9886K'])
         assert NextToken is None
         
-        print "Sample Query:\n"
-        print SimpleDBDevRenderer().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
+        self.sample({'Action': 'Query', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
         
     def checkData(self):
         domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
@@ -982,8 +986,7 @@ class SimpleDBTest():
         for key in expected :
             assert sorted(item[key]) == sorted(expected[key]) 
             
-        print "Sample GetAttributes:\n"
-        print SimpleDBDevRenderer().GetAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
+        self.sample({'Action': 'GetAttributes', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
         
     def testPutAttributes(self):
         
