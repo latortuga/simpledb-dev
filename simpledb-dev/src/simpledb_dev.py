@@ -34,7 +34,7 @@ DATA_DIR = os.path.realpath('domains/')
 VERSION = '2007-11-07'
 
 #Enable to turn off template caching etc.
-DEV_MODE = True
+DEV_MODE = False
 
 # For debugging use only
 web.internalerror = web.debugerror
