@@ -30,7 +30,8 @@
 import sys, os, re, base64, pickle, uuid, web, fcntl, hmac, dateutil.parser
 
 MAX_DOMAINS = 100
-DATA_DIR = os.path.join(os.path.dirname(sys.argv[0]), 'domains')
+THIS_DIR = os.path.dirname(sys.argv[0])
+DATA_DIR = os.path.join(THIS_DIR, 'domains')
 if not os.path.exists(DATA_DIR):
     os.mkdir(DATA_DIR)
 VERSION = '2007-11-07'
@@ -41,7 +42,7 @@ DEV_MODE = False
 # For debugging use only
 web.internalerror = web.debugerror
 
-render = web.template.render('templates/', cache=(not DEV_MODE))
+render = web.template.render(os.path.join(THIS_DIR, 'templates'), cache=(not DEV_MODE))
 
 urls = (
     '/', 'SimpleDBDevDispatcher'
@@ -949,7 +950,6 @@ class SimpleDBTest():
         
     def checkData(self):
         domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
-        
         if len(domains) > 1 or ( len(domains) == 1 and domains[0] != self.domain):
             raise Exception('Please make sure you have cleared the domains directory')
         
