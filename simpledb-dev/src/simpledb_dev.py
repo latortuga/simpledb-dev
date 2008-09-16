@@ -27,7 +27,7 @@
 # To run tests: python simpledb_dev.py test
 #===============================================================================
 
-import sys, os, re, base64, pickle, uuid, web, fcntl, hmac, dateutil.parser
+import sys, os, re, base64, pickle, uuid, web, fcntl, hmac
 
 MAX_DOMAINS = 100
 THIS_DIR = os.path.dirname(sys.argv[0])
