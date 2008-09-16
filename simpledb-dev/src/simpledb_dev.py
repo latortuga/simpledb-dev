@@ -27,15 +27,19 @@
 # To run tests: python simpledb_dev.py test
 #===============================================================================
 
-import sys, os, time, re, base64, pickle, uuid, web, fcntl
+import sys, os, re, base64, pickle, uuid, web, fcntl, hmac, dateutil.parser
 
 MAX_DOMAINS = 100
 DATA_DIR = os.path.realpath('domains/')
+VERSION = '2007-11-07'
+
+#Enable to turn off template caching etc.
+DEV_MODE = False
 
 # For debugging use only
 web.internalerror = web.debugerror
 
-render = web.template.render('templates/', cache=False)
+render = web.template.render('templates/', cache=(not DEV_MODE))
 
 urls = (
     '/', 'SimpleDBDevDispatcher'
@@ -53,25 +57,70 @@ class SimpleDBDevDispatcher:
         
         web.header("Content-Type","text/xml charset=utf-8")
         
-        input = web.input()
-        action = input.get('Action', '')
+        print self.run( web.input() )
         
-        # Check not a private method (prefix _) and that action, i.e. method, exists
-        if not re.compile('^[A-Z]').match(action) or SimpleDBDevRenderer.__dict__.get(action,None) is None:
+    def run(self, input):
+        
+        try :
+            
+            self._checkVersion(input)
+            self._checkTimestamp(input)
+            self._checkSignature(input)
+            self._runAction(input)
+        
+        except SimpleDBError, e:
+            web.ctx.status = e.httpStatus
+            return render.error(e.errorCode, e.msg, e.requestId)
+
+    def _runAction(self, input):
+        
+        action = input.get('Action', '')
+            
+        # Check that action exists
+        if SimpleDBDevRenderer.__dict__.get(action,None) is None:
             action = ''
             
         # TODO: not sure what the response is for an action not existing
         if action == '':
-            web.ctx.status = '400 Bad Request'
-            output = render.error('NoSuchAction', "The action " + input.get('Action', '') + " is not valid for this web service.", getRequestId())
-        else:
-            try :
-                output = SimpleDBDevRenderer.__dict__[action].__get__(SimpleDBDevRenderer(), SimpleDBDevRenderer)(input)
-            except SimpleDBError, e:
-                web.ctx.status = e.httpStatus
-                output = render.error(e.errorCode, e.msg, e.requestId)
-                
-        print output
+            self._error('NoSuchAction', '400 Bad Request', "The action " + input.get('Action', '') + " is not valid for this web service.", getRequestId())
+        
+        return SimpleDBDevRenderer.__dict__[action].__get__(SimpleDBDevRenderer(), SimpleDBDevRenderer)(input)
+
+    def _checkTimestamp(self, input):
+        # Very rudimentary, no real checking for expiration etc.
+        ts = input.get('Timestamp', '') 
+        if ts == '' :
+            self._error('MissingParameter', '400 Bad Request', 'The request must contain the parameter Timestamp')
+
+    def _checkSignature(self, input):
+        # Very basic, just check it is signed
+        # If we want to validate signatures, we will need to store the secret keys in a conf file
+        # complicating matters somewhat.
+        if input.get('Signature', '') == '' :
+            self._error('AuthFailure', '403 Forbidden', 'AWS was not able to validate the provided access credentials.')
+
+    def _checkVersion(self, input):
+        if input.get('Version', '') != VERSION :
+                self._error('NoSuchVersion', '400 Bad Request', 'SimpleDB/dev only supports version 2007-11-07 currently', getRequestId())
+
+    def _error(self, code, httpStatus, msg = ''):
+        raise SimpleDBError(getRequestId(), httpStatus, code, msg)
+
+    def _getSignature(self, secretKey, input):
+        '''Unused currently.''' 
+        
+        if input.get('SignatureVersion', '') != '1' :
+            raise SimpleDBError('400 Bad Request', getRequestId(), 'UnsupportedSignatureVersion', 'Only the newer signature version 1 is supported in SimpleDB/dev.')
+        
+        string = ''
+        keys = sorted(input.keys())
+        for key in keys:
+            if key == 'Signature' : continue
+            string += key+input[key]
+            
+        return base64.b64encode(hmac(secretKey, string, 'sha1'))
+        
+        
 
 class SimpleDBDevRenderer:
     ''' Calls the SimpleDBDev API and renders the results. '''
@@ -115,8 +164,21 @@ class SimpleDBDev:
     def _error(self, code, httpStatus, msg = ''):
         raise SimpleDBError(getRequestId(), httpStatus, code, msg)
     
-    def _getDomainFile(self, domainName, checkExists = False):
-        file = os.path.join(DATA_DIR, base64.b64encode(domainName) )
+    def _getAWSAccessKeyId(self, input):
+        awsAccessKeyId = input.get('AWSAccessKeyId', '')
+        if awsAccessKeyId == '':
+            self._error('AuthFailure', '403 Forbidden', 'AWS was not able to validate the provided access credentials.')
+        return awsAccessKeyId
+    
+    def _getDataDir(self, awsAccessKeyId):
+        dir = os.path.join(DATA_DIR, base64.b64encode(awsAccessKeyId))
+        if not os.path.exists(dir):
+            os.mkdir(dir)
+        return dir
+    
+    def _getDomainFile(self, awsAccessKeyId, domainName, checkExists = False):
+        dir = self._getDataDir(awsAccessKeyId)
+        file = os.path.join(dir, base64.b64encode(domainName) )
         if checkExists and not os.path.exists(file):
             self._error('NoSuchDomain', '400 Bad Request', 'The specified domain does not exist.')
         return file
@@ -146,9 +208,10 @@ class SimpleDBDev:
     
     def CreateDomain(self, input):
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName)
         
-        domainNames = self._getDomainNames()
+        domainNames = self._getDomainNames(awsAccessKeyId)
         if len(domainNames) > MAX_DOMAINS:
             self._error('NumberDomainsExceeded', '409 Conflict', 'The domain limit was exceeded.')
         
@@ -160,7 +223,8 @@ class SimpleDBDev:
 	
     def DeleteDomain(self, input):
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName)
         if os.path.exists(domainFile):
             os.unlink(domainFile)
         return getRequestId()
@@ -169,9 +233,9 @@ class SimpleDBDev:
         nextToken = input.get('NextToken', None)
         return self._decodeNextToken(nextToken)
     
-    def _getDomainNames(self):
+    def _getDomainNames(self, awsAccessKeyId):
         domainNames = []
-        for file in os.listdir(DATA_DIR):
+        for file in os.listdir(self._getDataDir(awsAccessKeyId)):
             if str(file).endswith('.lock') or str(file).startswith('.'): 
                 continue
             domainNames.append(base64.b64decode(file))
@@ -204,7 +268,7 @@ class SimpleDBDev:
         
         offset = self._getOffset(input)
         
-        domainNames = self._getDomainNames()
+        domainNames = self._getDomainNames(self._getAWSAccessKeyId(input))
         
         nextToken, domains = self._getSlice(offset, maxNumberOfDomains, domainNames)
 
@@ -246,7 +310,8 @@ class SimpleDBDev:
     def PutAttributes(self, input):
         
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName, True)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
         
         return self._changeData(domainFile, input, self._PutAttributes)
 
@@ -320,7 +385,8 @@ class SimpleDBDev:
     def DeleteAttributes(self, input):
         
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName, True)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
         
         return self._changeData(domainFile, input, self._DeleteAttributes)
         
@@ -362,7 +428,8 @@ class SimpleDBDev:
     def GetAttributes(self, input):
         itemName = self._getString(input, 'ItemName')
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName, True)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
         domainData = self._getDomainData(domainFile)
         
         # This is our item
@@ -394,7 +461,8 @@ class SimpleDBDev:
         
         queryExpression = input.get('QueryExpression', '')
         domainName = self._getDomainName(input)
-        domainFile = self._getDomainFile(domainName, True)
+        awsAccessKeyId = self._getAWSAccessKeyId(input)
+        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
         domainData = self._getDomainData(domainFile) 
         offset     = self._getOffset(input)
         
@@ -681,6 +749,8 @@ class SimpleDBTest():
     '''Tests taken from the SimpleDB technical documentation.'''
 
     domain = 'TestDomain'
+    awsKey = 'Test'
+    version = '2007-11-07'
 
     def run(self):
         
@@ -702,50 +772,51 @@ class SimpleDBTest():
 
     def testDeleteAttributes(self):
         
-        SimpleDBDev().DeleteAttributes({'DomainName' : self.domain, 'ItemName' : '1579124585', 
+        SimpleDBDev().DeleteAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '1579124585', 
                                         'Attribute.0.Name' : 'Title', 'Attribute.0.Value' : 'The Right Stuff',
                                         'Attribute.1.Name' : 'Pages', 'Attribute.1.Value' : '00304'})
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
         assert list == []
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
         assert sorted(list) == sorted(['0802131786'])
         assert NextToken is None
         
         print "Sample DeleteAttributes:\n"
-        print SimpleDBDevRenderer().Query({'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
+        print SimpleDBDevRenderer().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
         
     def testListDomains(self):
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert domains == [self.domain]
         
         domain2 = self.domain+'XXX'
         
         print "Sample CreateDomain:\n"
-        print SimpleDBDevRenderer().CreateDomain({'DomainName' : domain2})
+        print SimpleDBDevRenderer().CreateDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
 
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert sorted(domains) == sorted([self.domain, domain2])
         
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain, 'MaxNumberOfDomains': '1'})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'MaxNumberOfDomains': '1'})
         assert domains == [self.domain]
         
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain, 'NextToken' : nextToken, 'MaxNumberOfDomains': '1'})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'NextToken' : nextToken, 'MaxNumberOfDomains': '1'})
         assert domains == [domain2]
         
         print "Sample ListDomains:\n"
-        print SimpleDBDevRenderer().ListDomains({'DomainName' : self.domain})
+        print SimpleDBDevRenderer().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         
         print "Sample DeleteDomain:\n"
-        print SimpleDBDevRenderer().DeleteDomain({'DomainName' : domain2})
+        print SimpleDBDevRenderer().DeleteDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : domain2})
         
     def testPutAttributesReplace(self):
         
         s = SimpleDBDev()
         
         input = {
+                 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 
                  'ItemName' : 'B00005JPLW',
                  'DomainName' : self.domain,
                  'Attribute.0.Name' : 'Rating', 'Attribute.0.Value' : '*****', 'Attribute.0.Replace' : 'true'
@@ -753,11 +824,11 @@ class SimpleDBTest():
 
         s.PutAttributes(input)
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Rating' = '*****']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Rating' = '*****']"})
         assert sorted(list) == sorted(['0385333498', 'B00005JPLW', 'B000SF3NGK'])
         assert NextToken is None
 
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Rating' = '***']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Rating' = '***']"})
         assert sorted(list) == sorted([])
         assert NextToken is None
         
@@ -766,7 +837,7 @@ class SimpleDBTest():
 
     def testQueryWithAttributes(self):
         
-        items, NextToken, requestId = SimpleDBDev().QueryWithAttributes({'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
+        items, NextToken, requestId = SimpleDBDev().QueryWithAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
         assert NextToken is None
         item = items.get('1579124585', None)
         assert item is not None
@@ -784,108 +855,108 @@ class SimpleDBTest():
             assert sorted(item[key]) == sorted(expected[key]) 
             
         print "Sample QueryWithAttributes:"
-        print SimpleDBDevRenderer().QueryWithAttributes({'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
+        print SimpleDBDevRenderer().QueryWithAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
         
     def testQuery(self):
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert list == ['B000T9886K', '1579124585', '0385333498', '0802131786', 'B00005JPLW', 'B000SF3NGK']
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Title' = 'The Right Stuff']"})
         assert list == ['1579124585']
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
         assert sorted(list) == sorted(['B000T9886K', 'B00005JPLW', 'B000SF3NGK'])
         assert NextToken is None
 
         # test next token
-        list, NextToken, requestId = SimpleDBDev().Query({'MaxNumberOfItems' : '2', 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
-        list2, NextToken2, requestId2 = SimpleDBDev().Query({'MaxNumberOfItems' : '2', 'NextToken' : NextToken, 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'MaxNumberOfItems' : '2', 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
+        list2, NextToken2, requestId2 = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'MaxNumberOfItems' : '2', 'NextToken' : NextToken, 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1985']"})
         list2.extend(list)
         assert sorted(list2) == sorted(['B000T9886K', 'B00005JPLW', 'B000SF3NGK'])
         assert NextToken2 is None
 
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Rating' starts-with '****']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Rating' starts-with '****']"})
         assert sorted(list) == sorted(['0385333498', '1579124585', '0802131786', 'B000SF3NGK'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
         assert sorted(list) == sorted(['1579124585', '0802131786'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' > '1975' and 'Year' < '2008']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1975' and 'Year' < '2008']"})
         assert sorted(list) == sorted(['1579124585', 'B000T9886K', 'B00005JPLW', 'B000SF3NGK'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Rating' = '***' or 'Rating' = '*****']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Rating' = '***' or 'Rating' = '*****']"})
         assert sorted(list) == sorted(['0385333498', 'B00005JPLW', 'B000SF3NGK'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' > '1950' and 'Year' < '1960' or 'Year' starts-with '193' or 'Year' = '2007']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' > '1950' and 'Year' < '1960' or 'Year' starts-with '193' or 'Year' = '2007']"})
         assert sorted(list) == sorted(['0385333498', '0802131786', 'B000T9886K', 'B00005JPLW'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Rating' = '4 stars' or 'Rating' = '****']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Rating' = '4 stars' or 'Rating' = '****']"})
         assert sorted(list) == sorted(['1579124585', '0802131786', 'B000T9886K'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'Book' and 'Keyword' = 'Hardcover'] "})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'Book' and 'Keyword' = 'Hardcover'] "})
         assert list == []
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Keyword' != 'Book']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Keyword' != 'Book']"})
         assert sorted(list) == sorted(['0385333498','1579124585','B000T9886K','B00005JPLW'])
         assert NextToken is None
 
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'CD'] intersection ['Year' = '2007']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'CD'] intersection ['Year' = '2007']"})
         assert sorted(list) == sorted(['B000T9886K'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'Frank Miller'] union ['Rating' starts-with '****'] "})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Keyword' = 'Frank Miller'] union ['Rating' starts-with '****'] "})
         assert sorted(list) == sorted(['0385333498','0802131786','1579124585','B00005JPLW','B000SF3NGK'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' >= '1900' and 'Year' < '2000'] intersection ['Keyword' = 'Book'] intersection ['Rating' starts-with '4' or 'Rating' = '****'] union ['Title' = '300'] union ['Author' = 'Paul Van Dyk'] "})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' >= '1900' and 'Year' < '2000'] intersection ['Keyword' = 'Book'] intersection ['Rating' starts-with '4' or 'Rating' = '****'] union ['Title' = '300'] union ['Author' = 'Paul Van Dyk'] "})
         assert sorted(list) == sorted(['0802131786','1579124585','B00005JPLW','B000T9886K'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "not ['Rating' starts-with '*'] intersection ['Year' > '2000']"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "not ['Rating' starts-with '*'] intersection ['Year' > '2000']"})
         assert sorted(list) == sorted(['B000T9886K'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' < '1980'] sort 'Year' asc"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' < '1980'] sort 'Year' asc"})
         assert sorted(list) == sorted(['0802131786','0385333498','1579124585'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' < '1980'] sort 'Year'"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' < '1980'] sort 'Year'"})
         assert sorted(list) == sorted(['0802131786','0385333498','1579124585'])
         assert NextToken is None
         
-        list, NextToken, requestId = SimpleDBDev().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
+        list, NextToken, requestId = SimpleDBDev().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
         assert sorted(list) == sorted(['B00005JPLW','B000T9886K'])
         assert NextToken is None
         
         print "Sample Query:\n"
-        print SimpleDBDevRenderer().Query({'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
+        print SimpleDBDevRenderer().Query({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Year' = '2007'] intersection ['Author' starts-with ''] sort 'Author' desc"})
         
     def checkData(self):
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         
         if len(domains) > 1 or ( len(domains) == 1 and domains[0] != self.domain):
             raise Exception('Please make sure you have cleared the domains directory')
         
     def testDeleteDomain(self):
-        SimpleDBDev().DeleteDomain({'DomainName' : self.domain})
+        SimpleDBDev().DeleteDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert not (self.domain in domains)
 
     def testCreateDomain(self):
-        SimpleDBDev().CreateDomain({'DomainName' : self.domain})
+        SimpleDBDev().CreateDomain({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         
-        domains, nextToken, requestId = SimpleDBDev().ListDomains({'DomainName' : self.domain})
+        domains, nextToken, requestId = SimpleDBDev().ListDomains({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain})
         assert self.domain in domains
         
     def _convertAttrs(self, attrs, dict):
@@ -897,7 +968,7 @@ class SimpleDBTest():
                 i+=1
         
     def testGetAttributes(self):
-        item, requestId = SimpleDBDev().GetAttributes({'DomainName' : self.domain, 'ItemName' : '0385333498'})
+        item, requestId = SimpleDBDev().GetAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
                                                        
         expected = {
                           'Title' : ['The Sirens of Titan'], 
@@ -912,7 +983,7 @@ class SimpleDBTest():
             assert sorted(item[key]) == sorted(expected[key]) 
             
         print "Sample GetAttributes:\n"
-        print SimpleDBDevRenderer().GetAttributes({'DomainName' : self.domain, 'ItemName' : '0385333498'})
+        print SimpleDBDevRenderer().GetAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
         
     def testPutAttributes(self):
         
@@ -990,6 +1061,8 @@ class SimpleDBTest():
         
         input = {
                  'ItemName' : itemName,
+                 'AWSAccessKeyId' : self.awsKey, 
+                 'Version' : self.version, 
                  'DomainName' : self.domain
                  }
         
@@ -1000,5 +1073,7 @@ class SimpleDBTest():
 if __name__ == "__main__": 
     if len(sys.argv) > 1 and str(sys.argv[1]) == 'test' :
         SimpleDBTest().run()
-    else :
+    elif DEV_MODE:
         web.run(urls, globals(), web.reloader)
+    else :
+        web.run(urls, globals())
