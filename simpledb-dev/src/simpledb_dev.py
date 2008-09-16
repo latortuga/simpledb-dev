@@ -30,7 +30,9 @@
 import sys, os, re, base64, pickle, uuid, web, fcntl, hmac, dateutil.parser
 
 MAX_DOMAINS = 100
-DATA_DIR = os.path.realpath('domains/')
+DATA_DIR = os.path.join(os.path.dirname(sys.argv[0]), 'domains')
+if not os.path.exists(DATA_DIR):
+    os.mkdir(DATA_DIR)
 VERSION = '2007-11-07'
 
 #Enable to turn off template caching etc.
@@ -1073,7 +1075,7 @@ class SimpleDBTest():
         
         s.PutAttributes(input)
     
-if __name__ == "__main__": 
+if __name__ == "__main__":     
     if len(sys.argv) > 1 and str(sys.argv[1]) == 'test' :
         SimpleDBTest().run()
     elif DEV_MODE:
