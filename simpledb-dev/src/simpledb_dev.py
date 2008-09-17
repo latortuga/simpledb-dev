@@ -27,7 +27,7 @@
 # To run tests: python simpledb_dev.py test
 #===============================================================================
 
-import sys, os, re, base64, pickle, uuid, web, fcntl, hmac
+import sys, os, re, base64, cPickle, uuid, web, fcntl, hmac
 
 MAX_DOMAINS = 100
 THIS_DIR = os.path.dirname(sys.argv[0])
@@ -220,7 +220,7 @@ class SimpleDBDev:
         
         if not os.path.exists(domainFile):
             f = open(domainFile, "w")
-            pickle.dump({'name': domainName, 'data': {}}, f)
+            cPickle.dump({'name': domainName, 'data': {}}, f)
             f.close()
         return getRequestId()
 	
@@ -299,7 +299,7 @@ class SimpleDBDev:
         
         # dump it out
         tempf = open(domainFile+'.tmp', "w")
-        pickle.dump(domainData, tempf)
+        cPickle.dump(domainData, tempf)
         tempf.close()
         
         # atomic move
@@ -424,7 +424,7 @@ class SimpleDBDev:
     def _getDomainData(self, domainFile):
         # read in the domain data
         f = open(domainFile, "r")
-        domainData = pickle.load(f)
+        domainData = cPickle.load(f)
         f.close()
         return domainData
 
