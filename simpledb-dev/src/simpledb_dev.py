@@ -25,13 +25,20 @@
 #
 # To run:       python simpledb_dev.py <port>
 # To run tests: python simpledb_dev.py test
+#
+#
+# data/
+#   <md5 hash of access key>/   <= data dir for an account
+#     domains.pickle            <= pickled list of all domains
+#     <md5 hash of domain>      <= pickled data structure for a domain
+#
 #===============================================================================
 
-import sys, os, re, base64, cPickle, uuid, web, fcntl, hmac
+import sys, os, re, base64, cPickle, uuid, web, fcntl, hmac, hashlib
 
 MAX_DOMAINS = 100
 THIS_DIR = os.path.dirname(sys.argv[0])
-DATA_DIR = os.path.join(THIS_DIR, 'domains')
+DATA_DIR = os.path.join(THIS_DIR, 'data')
 if not os.path.exists(DATA_DIR):
     os.mkdir(DATA_DIR)
 VERSION = '2007-11-07'
@@ -168,20 +175,48 @@ class SimpleDBDev:
         raise SimpleDBError(getRequestId(), httpStatus, code, msg)
     
     def _getAWSAccessKeyId(self, input):
-        awsAccessKeyId = input.get('AWSAccessKeyId', '')
-        if awsAccessKeyId == '':
+        awsAccountAccessKey = input.get('AWSAccessKeyId', '')
+        if awsAccountAccessKey == '':
             self._error('AuthFailure', '403 Forbidden', 'AWS was not able to validate the provided access credentials.')
-        return awsAccessKeyId
+        return awsAccountAccessKey
     
-    def _getDataDir(self, awsAccessKeyId):
-        dir = os.path.join(DATA_DIR, base64.b64encode(awsAccessKeyId))
+    def _getAccountDataDir(self, awsAccountAccessKey):
+        m = hashlib.md5()
+        m.update(awsAccountAccessKey)
+        k = m.hexdigest()
+        dir = os.path.join(DATA_DIR, k)
         if not os.path.exists(dir):
             os.mkdir(dir)
         return dir
     
-    def _getDomainFile(self, awsAccessKeyId, domainName, checkExists = False):
-        dir = self._getDataDir(awsAccessKeyId)
-        file = os.path.join(dir, base64.b64encode(domainName) )
+    def _getDomainsPickleFile(self, accountDataDir):
+        return os.path.join(accountDataDir, 'domains.pickle')
+    
+    def _getDomains(self, domainsFile):
+        '''Returns a list of domains for an account.'''
+        
+        if not os.path.exists(domainsFile):
+            return []
+        
+        try :
+            f = open(domainsFile,'r')
+            r =  cPickle.load(f)
+            f.close()
+        except :
+            r = []
+
+        return r
+    
+    def _setDomains(self, domainsFile, domains):
+        f = open(domainsFile,'w')
+        r =  cPickle.dump(domains, f)
+        f.close()
+    
+    def _getDomainPickleFile(self, accountDataDir, domainName, checkExists = False):
+        m = hashlib.md5()
+        m.update(domainName)
+        k = m.hexdigest()
+        file = os.path.join(accountDataDir, k)
         if checkExists and not os.path.exists(file):
             self._error('NoSuchDomain', '400 Bad Request', 'The specified domain does not exist.')
         return file
@@ -209,36 +244,84 @@ class SimpleDBDev:
             self._error('InvalidNextToken', '400 Bad Request', 'The specified next token is not valid.')
         return int(x)
     
-    def CreateDomain(self, input):
-        domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName)
+    def _changeDomains(self, input, function):
+        '''Uses a lock file.'''
         
-        domainNames = self._getDomainNames(awsAccessKeyId)
-        if len(domainNames) > MAX_DOMAINS:
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+
+        domainsFile = self._getDomainsPickleFile(dir)
+        
+        lockf = open(domainsFile+'.lock','w')
+        fcntl.lockf(lockf.fileno(), fcntl.LOCK_EX)
+        
+        ret = function(input)
+
+        lockf.close()
+            
+        return ret
+    
+    
+    def CreateDomain(self, input):
+        return self._changeDomains(input, self._CreateDomain)
+    
+    def _CreateDomain(self, input):
+        domainName = self._getDomainName(input)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        domainFile = self._getDomainPickleFile(dir, domainName)
+        
+        if os.path.exists(domainFile):
+            return getRequestId()
+        
+        domainsFile = self._getDomainsPickleFile(dir)
+ 
+        domains = self._getDomains(domainsFile)
+        
+        if len(domains) == MAX_DOMAINS:
             self._error('NumberDomainsExceeded', '409 Conflict', 'The domain limit was exceeded.')
         
+        domains.append(domainName)
+        
+        self._setDomains(domainsFile, domains)
+
         if not os.path.exists(domainFile):
             f = open(domainFile, "w")
             cPickle.dump({'name': domainName, 'data': {}}, f)
             f.close()
+            
         return getRequestId()
 	
     def DeleteDomain(self, input):
-        domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName)
-        if os.path.exists(domainFile):
-            os.unlink(domainFile)
-        return getRequestId()
+        return self._changeDomains(input, self._DeleteDomain)
     
+    def _DeleteDomain(self, input):
+        domainName = self._getDomainName(input)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        
+        domainFile = self._getDomainPickleFile(dir, domainName)
+        
+        if not os.path.exists(domainFile):
+            return getRequestId()
+            
+        os.unlink(domainFile)
+
+        domainsFile = self._getDomainsPickleFile(dir)
+        domains = self._getDomains(domainsFile)
+        domains.remove(domainName)
+        self._setDomains(domainsFile, domains)
+
+        return getRequestId()
+        
+
     def _getOffset(self, input):
         nextToken = input.get('NextToken', None)
         return self._decodeNextToken(nextToken)
     
-    def _getDomainNames(self, awsAccessKeyId):
+    def _getDomainNames(self, awsAccountAccessKey):
         domainNames = []
-        for file in os.listdir(self._getDataDir(awsAccessKeyId)):
+        for file in os.listdir(self._getAccountDataDir(awsAccountAccessKey)):
             if str(file).endswith('.lock') or str(file).startswith('.'): 
                 continue
             domainNames.append(base64.b64decode(file))
@@ -271,7 +354,10 @@ class SimpleDBDev:
         
         offset = self._getOffset(input)
         
-        domainNames = self._getDomainNames(self._getAWSAccessKeyId(input))
+        
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dataDir = self._getAccountDataDir(awsAccountAccessKey)
+        domainNames = self._getDomains(self._getDomainsPickleFile(dataDir))
         
         nextToken, domains = self._getSlice(offset, maxNumberOfDomains, domainNames)
 
@@ -286,7 +372,7 @@ class SimpleDBDev:
             self._error('InvalidParameterValue', '400 Bad Request', "Value (" + value + ") for parameter Value is invalid. Value exceeds maximum length of 1024.")
         return value
         
-    def _changeData(self, domainFile, input, function):
+    def _changeDomainData(self, domainFile, input, function):
         
         # We want a block until the lock is released
         lockf = open(domainFile+'.lock', "w")
@@ -313,10 +399,11 @@ class SimpleDBDev:
     def PutAttributes(self, input):
         
         domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        domainFile = self._getDomainPickleFile(dir, domainName, True)
         
-        return self._changeData(domainFile, input, self._PutAttributes)
+        return self._changeDomainData(domainFile, input, self._PutAttributes)
 
     def _PutAttributes(self, domainData, input):
 
@@ -388,10 +475,11 @@ class SimpleDBDev:
     def DeleteAttributes(self, input):
         
         domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        domainFile = self._getDomainPickleFile(dir, domainName, True)
         
-        return self._changeData(domainFile, input, self._DeleteAttributes)
+        return self._changeDomainData(domainFile, input, self._DeleteAttributes)
         
     def _DeleteAttributes(self, domainData, input):
 
@@ -431,8 +519,9 @@ class SimpleDBDev:
     def GetAttributes(self, input):
         itemName = self._getString(input, 'ItemName')
         domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        domainFile = self._getDomainPickleFile(dir, domainName, True)
         domainData = self._getDomainData(domainFile)
         
         # This is our item
@@ -464,8 +553,9 @@ class SimpleDBDev:
         
         queryExpression = input.get('QueryExpression', '')
         domainName = self._getDomainName(input)
-        awsAccessKeyId = self._getAWSAccessKeyId(input)
-        domainFile = self._getDomainFile(awsAccessKeyId, domainName, True)
+        awsAccountAccessKey = self._getAWSAccessKeyId(input)
+        dir = self._getAccountDataDir(awsAccountAccessKey)
+        domainFile = self._getDomainPickleFile(dir, domainName, True)
         domainData = self._getDomainData(domainFile) 
         offset     = self._getOffset(input)
         
