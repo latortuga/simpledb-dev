@@ -467,7 +467,7 @@ class SimpleDBDev:
         for i in a:
             if a[i].get('Name', '') == '' :
                 self._error('MissingParameter', '400 Bad Request', "Attribute.Name missing for Attribute "+i)
-            if a[i].get('Value', '') == '' :
+            if a[i].get('Value', None) is None :
                 self._error('MissingParameter', '400 Bad Request', "Attribute.Value missing for Attribute "+i)
             
         return a
