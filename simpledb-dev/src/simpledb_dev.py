@@ -319,14 +319,6 @@ class SimpleDBDev:
         nextToken = input.get('NextToken', None)
         return self._decodeNextToken(nextToken)
     
-    def _getDomainNames(self, awsAccountAccessKey):
-        domainNames = []
-        for file in os.listdir(self._getAccountDataDir(awsAccountAccessKey)):
-            if str(file).endswith('.lock') or str(file).startswith('.'): 
-                continue
-            domainNames.append(base64.b64decode(file))
-        return domainNames
-    
     def _getSlice(self, offset, max, list):
         
         l = len(list)
