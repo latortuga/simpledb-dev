@@ -257,6 +257,7 @@ class SimpleDBDev:
         for i in range(0,10):
             try:
                portalocker.lock(lockf, portalocker.LOCK_EX)
+               break
             except portalocker.LockException, e:
                # File locked by somebody else. Do some other work, then try again later.
                if i == 9 : raise e
@@ -379,6 +380,7 @@ class SimpleDBDev:
         for i in range(0,10):
             try:
                portalocker.lock(lockf, portalocker.LOCK_EX)
+               break
             except portalocker.LockException, e:
                # File locked by somebody else. Do some other work, then try again later.
                if i == 9 : raise e
@@ -394,7 +396,8 @@ class SimpleDBDev:
         cPickle.dump(domainData, tempf)
         tempf.close()
         
-        # atomic move
+        # windows won't let you overwrite seemingly - wtf!?
+        if os.name == 'nt' : os.remove(domainFile)
         os.rename(domainFile+'.tmp', domainFile)
     
         # release the lock
