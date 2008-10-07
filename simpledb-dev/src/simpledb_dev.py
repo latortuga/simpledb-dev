@@ -34,7 +34,7 @@
 #
 #===============================================================================
 
-import sys, os, re, base64, cPickle, uuid, web, fcntl, hmac, hashlib
+import sys, os, re, base64, cPickle, uuid, web, portalocker, hmac, hashlib, time
 
 MAX_DOMAINS = 100
 THIS_DIR = os.path.dirname(sys.argv[0])
@@ -253,10 +253,18 @@ class SimpleDBDev:
         domainsFile = self._getDomainsPickleFile(dir)
         
         lockf = open(domainsFile+'.lock','w')
-        fcntl.lockf(lockf.fileno(), fcntl.LOCK_EX)
+        
+        for i in range(0,10):
+            try:
+               portalocker.lock(lockf, portalocker.LOCK_EX)
+            except portalocker.LockException, e:
+               # File locked by somebody else. Do some other work, then try again later.
+               if i == 9 : raise e
+               time.sleep(1)
         
         ret = function(input)
 
+        portalocker.unlock(lockf)
         lockf.close()
             
         return ret
@@ -368,7 +376,13 @@ class SimpleDBDev:
         
         # We want a block until the lock is released
         lockf = open(domainFile+'.lock', "w")
-        fcntl.lockf(lockf.fileno(), fcntl.LOCK_EX)
+        for i in range(0,10):
+            try:
+               portalocker.lock(lockf, portalocker.LOCK_EX)
+            except portalocker.LockException, e:
+               # File locked by somebody else. Do some other work, then try again later.
+               if i == 9 : raise e
+               time.sleep(1)
         
         # read in the domain data
         domainData = self._getDomainData(domainFile)
@@ -384,6 +398,7 @@ class SimpleDBDev:
         os.rename(domainFile+'.tmp', domainFile)
     
         # release the lock
+        portalocker.unlock(lockf)
         lockf.close()
         
         return ret
