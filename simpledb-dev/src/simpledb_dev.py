@@ -500,22 +500,25 @@ class SimpleDBDev:
         
         a = self._extractAttributeInput(input)
         
-        for i in a:
-            aname = a[i]['Name']
-            avalueNow = item.get(aname, None)
-            if avalueNow is not None : # list
-                try :
-                    avalueNow.remove(a[i]['Value'])
-                    if avalueNow.__len__() == 0 :
-                        del item[aname]
-                except:
-                    pass
-        
-        # refresh our domain data
-        if item.__len__() == 0 :
+        if len(a) == 0 :
             del domainData['data'][itemName] 
         else :
-            domainData['data'][itemName] = item
+            for i in a:
+                aname = a[i]['Name']
+                avalueNow = item.get(aname, None)
+                if avalueNow is not None : # list
+                    try :
+                        avalueNow.remove(a[i]['Value'])
+                        if avalueNow.__len__() == 0 :
+                            del item[aname]
+                    except:
+                        pass
+            
+            # refresh our domain data
+            if item.__len__() == 0 :
+                del domainData['data'][itemName] 
+            else :
+                domainData['data'][itemName] = item
         
         return getRequestId()
 
@@ -866,8 +869,8 @@ class SimpleDBTest():
         self.testGetAttributes()
         self.testQuery()
         self.testQueryWithAttributes()
-        self.testDeleteAttributes()
         self.testPutAttributesReplace()
+        self.testDeleteAttributes()
         self.testListDomains()
         self.testDeleteDomain()
         
@@ -889,6 +892,25 @@ class SimpleDBTest():
         
         self.sample({'Action': 'Query', 'Timestamp': 'XXX', 'Signature' : 'XXX', 'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'QueryExpression': "['Pages' < '00320']"})
 
+        item, requestId = SimpleDBDev().GetAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
+                                                       
+        expected = {
+                          'Title' : ['The Sirens of Titan'], 
+                          'Author' : ['Kurt Vonnegut'], 
+                          'Year' : ['1959'], 
+                          'Pages' : ['00336'],
+                          'Keyword' : ['Book', 'Paperback'],
+                          'Rating' : ['*****', '5 stars', 'Excellent']
+                        }
+        
+        for key in expected :
+            assert sorted(item[key]) == sorted(expected[key]) 
+            
+        SimpleDBDev().DeleteAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
+            
+        item, requestId = SimpleDBDev().GetAttributes({'AWSAccessKeyId' : self.awsKey, 'Version' : self.version, 'DomainName' : self.domain, 'ItemName' : '0385333498'})
+        
+        assert item == {}
 
     def sample(self, input):        
         print "Sample "+input['Action']+":\n"
