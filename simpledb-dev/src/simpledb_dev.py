@@ -69,6 +69,12 @@ class SimpleDBDevDispatcher:
         
         print self.run( web.input() )
         
+    def POST(self):
+        
+        web.header("Content-Type","text/xml charset=utf-8")
+        
+        print self.run( web.input() )
+        
     def run(self, input):
         
         try :
@@ -152,7 +158,7 @@ class SimpleDBDevRenderer:
         return render.PutAttributes(requestId)
         
     def DeleteAttributes(self, input):
-        requestId = SimpleDBDev().PutAttributes(input)
+        requestId = SimpleDBDev().DeleteAttributes(input)
         return render.DeleteAttributes(requestId)
 
     def GetAttributes(self, input):
