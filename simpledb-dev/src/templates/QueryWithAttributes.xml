@@ -1,6 +1,6 @@
 $def with (items, nextToken, requestId)
 <?xml version="1.0"?>
-<QueryWithAttributesResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07"> 
+<QueryWithAttributesResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07/"> 
 <QueryWithAttributesResult>
 $if nextToken is not None:
 	<NextToken>$nextToken=</NextToken>

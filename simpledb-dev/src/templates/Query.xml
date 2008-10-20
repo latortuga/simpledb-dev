@@ -1,6 +1,6 @@
 $def with (keys, nextToken, requestId)
 <?xml version="1.0"?>
-<QueryResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07"> 
+<QueryResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07/"> 
 <QueryResult> 
 $if nextToken is not None:
 	<NextToken>$nextToken=</NextToken> 

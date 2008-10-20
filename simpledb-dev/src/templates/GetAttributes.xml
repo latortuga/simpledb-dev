@@ -1,6 +1,6 @@
 $def with (item, requestId)
 <?xml version="1.0"?>
-<GetAttributesResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07"> 
+<GetAttributesResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07/"> 
 	<GetAttributesResult> 
 		$for name in item:
 			$for value in item[name]:

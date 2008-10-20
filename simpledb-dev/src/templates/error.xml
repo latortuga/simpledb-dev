@@ -1,6 +1,6 @@
 $def with (code, message, requestId)
 <?xml version="1.0"?>
-<Response> 
+<Response xmlns="http://sdb.amazonaws.com/doc/2007-11-07/">  
 	<Errors> 
 		<Error> 
 			<Code>$code</Code> 

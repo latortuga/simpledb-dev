@@ -1,6 +1,6 @@
 $def with (domainNames, nextToken, requestId)
 <?xml version="1.0"?>
-<ListDomainsResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07"> 
+<ListDomainsResponse xmlns="http://sdb.amazonaws.com/doc/2007-11-07/"> 
 <ListDomainsResult>
 $if nextToken is not None:
 	<NextToken>$nextToken=</NextToken> 
