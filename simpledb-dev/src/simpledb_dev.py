@@ -1206,7 +1206,7 @@ class SimpleDBTest():
 if __name__ == "__main__":     
     if len(sys.argv) > 1 and str(sys.argv[1]) == 'test' :
         SimpleDBTest().run()
-    elif DEV_MODE:
-        web.run(urls, globals(), web.reloader)
     else :
-        web.run(urls, globals())
+        web.config.setdefault('debug', DEV_MODE)
+        app = web.application(urls, globals())
+        app.run()
