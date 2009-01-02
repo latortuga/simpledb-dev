@@ -67,13 +67,13 @@ class SimpleDBDevDispatcher:
         
         web.header("Content-Type","text/xml charset=utf-8")
         
-        print self.run( web.input() )
+        return self.run( web.input() )
         
     def POST(self):
         
         web.header("Content-Type","text/xml charset=utf-8")
         
-        print self.run( web.input() )
+        return self.run( web.input() )
         
     def run(self, input):
         
