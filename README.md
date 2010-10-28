@@ -15,11 +15,13 @@ Now supports Linux, OS X and Windows >= XP.
 Currently implemented:
 
 The current 2007-11-07 REST API
+
 * _EVERY Action_ - SimpleDB/dev is functionally complete :o)
 * Correct HTTP Error Responses, as per the technical documentation
 * A large suite of tests created from the examples provided in the technical documentation
 
 Currently not implemented:
+
 * The SOAP API.
 * Authentication - signature value checking.
 * Timestamp format and expiration checking.
